@@ -18,11 +18,9 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import warnings
-warnings.filterwarnings('ignore')
 
 # Load the dataset
-df = pd.read_csv('customer_segmentation.csv')
+df = pd.read_csv('data/customer_segmentation.csv')
 
 # Display basic information
 print("Dataset shape:", df.shape)
@@ -43,7 +41,7 @@ print(df.describe())
 df_clean = df.copy()
 
 # Convert Dt_Customer to datetime
-df_clean['Dt_Customer'] = pd.to_datetime(df_clean['Dt_Customer'])
+df_clean['Dt_Customer'] = pd.to_datetime(df_clean['Dt_Customer'], format="%d-%m-%Y")
 
 # Calculate customer age from birth year
 reference_date = df_clean['Dt_Customer'].max()
@@ -63,7 +61,7 @@ df_clean['Total_Purchases'] = df_clean[purchase_cols].sum(axis=1)
 
 # Calculate campaign acceptance rate
 campaign_cols = ['AcceptedCmp1', 'AcceptedCmp2', 'AcceptedCmp3', 
-                 'AcceptedCmp4', 'AcceptedCmp5', 'Response']
+                 'AcceptedCmp4', 'AcceptedCmp5']
 df_clean['Campaign_Acceptances'] = df_clean[campaign_cols].sum(axis=1)
 
 # Handle missing income values
@@ -90,11 +88,13 @@ print(f"- Total Purchases: {df_clean['Total_Purchases'].min()} to {df_clean['Tot
 # %%
 # Create RFM dataframe
 rfm_df = pd.DataFrame({
-    'Id': df_clean['Id'],
+    'Id': df_clean['ID'],
     'Recency': df_clean['Recency'],
     'Frequency': df_clean['Total_Purchases'],
     'Monetary': df_clean['Total_Spending']
 })
+
+rfm_df.describe()
 
 # Calculate RFM scores (1-5 scale for each dimension)
 # For Recency: lower values get higher scores (more recent is better)
@@ -167,39 +167,64 @@ print(segment_analysis)
 # ### 3.3 RFM Visualization
 
 # %%
-# Create 3D scatter plot of RFM
-fig = go.Figure(data=[go.Scatter3d(
-    x=rfm_df['Recency'],
-    y=rfm_df['Frequency'],
-    z=rfm_df['Monetary'],
-    mode='markers',
-    marker=dict(
-        size=5,
-        color=rfm_df['R_Score'],
-        colorscale='Viridis',
-        showscale=True,
-        colorbar=dict(title='Recency Score')
-    ),
-    text=rfm_df['Segment'],
-    hovertemplate='<b>%{text}</b><br>Recency: %{x}<br>Frequency: %{y}<br>Monetary: $%{z}<extra></extra>'
-)])
+# Create color mapping for segments
+segment_colors = {
+    'Champions': '#1f77b4',
+    'Loyal Customers': '#2ca02c',
+    'Potential Loyalists': '#ff7f0e',
+    'Recent Customers': '#9467bd',
+    'At Risk': '#d62728',
+    'Cant Lose Them': '#e377c2',
+    'Lost': '#7f7f7f',
+    'Hibernating': '#bcbd22'
+}
+
+# Create 3D scatter plot colored by segment
+fig = go.Figure()
+
+# Add trace for each segment
+for segment in rfm_df['Segment'].unique():
+    segment_data = rfm_df[rfm_df['Segment'] == segment]
+    fig.add_trace(go.Scatter3d(
+        x=segment_data['Recency'],
+        y=segment_data['Frequency'],
+        z=segment_data['Monetary'],
+        mode='markers',
+        name=segment,
+        marker=dict(
+            size=5,
+            color=segment_colors.get(segment, '#000000'),
+            opacity=0.8,
+            line=dict(width=0)
+        ),
+        text=segment_data['Segment'],
+        hovertemplate='<b>%{text}</b><br>Recency: %{x}<br>Frequency: %{y}<br>Monetary: $%{z}<extra></extra>'
+    ))
 
 fig.update_layout(
-    title='3D RFM Segmentation',
+    title='3D RFM Segmentation by Customer Segment',
     scene=dict(
         xaxis_title='Recency (days)',
         yaxis_title='Frequency (# purchases)',
         zaxis_title='Monetary ($)',
     ),
     height=700,
-    width=1000
+    width=1000,
+    legend=dict(
+        x=0.02,
+        y=0.98,
+        bgcolor='rgba(255, 255, 255, 0.8)',
+        bordercolor='black',
+        borderwidth=1
+    )
 )
 fig.show()
+
 
 # %%
 # Segment distribution
 segment_counts = rfm_df['Segment'].value_counts().sort_values(ascending=True)
-fig = px.barh(
+fig = px.bar(
     x=segment_counts.values,
     y=segment_counts.index,
     labels={'x': 'Number of Customers', 'y': 'Segment'},
@@ -258,7 +283,7 @@ fig.show()
 df_clean['Churn_Risk'] = df_clean['Recency'] / df_clean['Recency'].max()
 
 # Calculate campaign response rate
-df_clean['Campaign_Response_Rate'] = df_clean['Campaign_Acceptances'] / 6.0
+df_clean['Campaign_Response_Rate'] = df_clean['Campaign_Acceptances'] / 5.0 # for 5 campaigns
 
 # Calculate CLV
 # Formula: Total Spending × Campaign Response Rate × (1 - Churn Risk) × Loyalty Factor
@@ -276,7 +301,7 @@ print(f"\nCLV Range: ${df_clean['CLV'].min():.2f} to ${df_clean['CLV'].max():.2f
 # %%
 # Create CLV-based segments using quantiles
 clv_df = pd.DataFrame({
-    'Id': df_clean['Id'],
+    'Id': df_clean['ID'],
     'CLV': df_clean['CLV'],
     'Total_Spending': df_clean['Total_Spending'],
     'Campaign_Acceptances': df_clean['Campaign_Acceptances'],
@@ -323,7 +348,7 @@ print(clv_analysis)
 # %%
 # Distribution of CLV across segments
 fig = px.box(
-    clv_df,
+    clv_df.sort_values("CLV"),
     x='CLV_Segment',
     y='CLV',
     color='CLV_Segment',
@@ -378,17 +403,6 @@ fig.update_layout(
 )
 fig.show()
 
-# %%
-# Segment size pie chart
-segment_sizes = clv_df['CLV_Segment'].value_counts()
-fig = px.pie(
-    values=segment_sizes.values,
-    names=segment_sizes.index,
-    title='Customer Distribution Across CLV Segments',
-    color_discrete_sequence=px.colors.qualitative.Set2
-)
-fig.update_layout(height=500, width=800)
-fig.show()
 
 # %%
 # Comparison of multiple metrics across CLV segments
@@ -444,24 +458,3 @@ fig = px.density_heatmap(
 )
 fig.update_layout(height=600, width=1000)
 fig.show()
-
-# %% [markdown]
-# ## Section 6: Key Takeaways
-
-# %% [markdown]
-# ### Summary of Findings:
-# 
-# 1. **RFM Segmentation** provides a simple, interpretable way to segment customers
-#    based on their transaction behavior.
-#
-# 2. **CLV Segmentation** considers the long-term value of customers including
-#    their engagement and loyalty potential.
-#
-# 3. **Champions and Premium Customers** should receive personalized attention
-#    and loyalty programs.
-#
-# 4. **At-Risk and Low-Value Customers** may benefit from re-engagement campaigns
-#    or targeted retention efforts.
-#
-# 5. **These methods are complementary** - using both provides a more complete
-#    understanding of your customer base for targeted marketing strategies.
