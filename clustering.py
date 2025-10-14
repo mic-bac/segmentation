@@ -27,6 +27,7 @@ np.random.seed(42)
 
 # %% [markdown]
 # # 2. LOAD AND EXPLORE DATA
+#https://www.kaggle.com/datasets/vishakhdapat/customer-segmentation-clustering
 
 # Load the customer segmentation dataset
 df = pd.read_csv('data/customer_segmentation.csv')
@@ -631,42 +632,3 @@ fig.update_yaxes(title_text="Count", row=2, col=2)
 
 fig.update_layout(height=600, title_text="Customer Segment Characteristics")
 fig.show()
-
-# %% [markdown]
-# # 12. CONCLUSIONS AND RECOMMENDATIONS
-
-print("\n" + "=" * 70)
-print("CONCLUSIONS AND RECOMMENDATIONS")
-print("=" * 70)
-
-print("""
-1. ALGORITHM SELECTION FOR BUSINESS:
-   - K-Means is RECOMMENDED for this dataset because:
-     * It produces well-balanced, interpretable clusters
-     * High silhouette score indicates well-separated segments
-     * Fast to compute and easy to implement in production
-     * Works well with the customer behavior data
-   
-   - Hierarchical Clustering provides similar results with added
-     benefit of showing cluster relationships (dendrogram)
-   
-   - DBSCAN identified outlier customers, useful for fraud detection
-     but less suitable for business segmentation as it creates
-     irregular clusters and noise points
-
-2. BUSINESS APPLICATIONS:
-   - Use identified segments for targeted marketing campaigns
-   - Tailor product recommendations by segment
-   - Allocate resources based on customer value (spending)
-   - Create personalized customer engagement strategies
-   - Monitor segment migration over time
-
-3. NEXT STEPS:
-   - Validate results with domain experts
-   - Test marketing campaigns on segments
-   - Track segment characteristics over time
-   - Refine features based on business feedback
-   - Consider other features like product preferences
-""")
-
-print("=" * 70)
