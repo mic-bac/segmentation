@@ -228,8 +228,8 @@ df['KMeans_Cluster'] = kmeans_labels
 print(f"\nK-Means Results (k={optimal_k}):")
 print(f"Cluster distribution:\n{pd.Series(kmeans_labels).value_counts().sort_index()}")
 print(f"Silhouette Score: {silhouette_score(X_scaled, kmeans_labels):.3f}")
-print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, kmeans_labels):.2f}")
-print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, kmeans_labels):.3f}")
+print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, kmeans_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
+print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, kmeans_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
 
 # %% [markdown]
 # # 7. CLUSTERING ALGORITHM 2: HIERARCHICAL CLUSTERING (AGGLOMERATIVE)
@@ -260,8 +260,8 @@ df['Hierarchical_Cluster'] = hierarchical_labels
 print(f"\nHierarchical Clustering Results (linkage='ward', n_clusters={optimal_k}):")
 print(f"Cluster distribution:\n{pd.Series(hierarchical_labels).value_counts().sort_index()}")
 print(f"Silhouette Score: {silhouette_score(X_scaled, hierarchical_labels):.3f}")
-print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, hierarchical_labels):.2f}")
-print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, hierarchical_labels):.3f}")
+print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, hierarchical_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
+print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, hierarchical_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
 
 # %% [markdown]
 # # 8. CLUSTERING ALGORITHM 3: DBSCAN (Density-Based Clustering)
@@ -311,8 +311,8 @@ for cluster_id in sorted(set(dbscan_labels)):
 
 if n_clusters_dbscan > 1:
     print(f"Silhouette Score: {silhouette_score(X_scaled, dbscan_labels):.3f}")
-    print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, dbscan_labels):.2f}")
-    print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, dbscan_labels):.3f}")
+    print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, dbscan_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
+    print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, dbscan_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
 else:
     print("Note: DBSCAN found too few clusters for meaningful metrics.")
 
