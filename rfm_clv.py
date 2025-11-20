@@ -25,13 +25,13 @@ df = pd.read_csv('data/customer_segmentation.csv')
 # Display basic information
 print("Dataset shape:", df.shape)
 print("\nFirst few rows:")
-print(df.head())
+display(df.head())
 print("\nData types:")
 print(df.dtypes)
 print("\nMissing values:")
 print(df.isnull().sum())
 print("\nBasic statistics:")
-print(df.describe())
+display(df.describe())
 
 # %% [markdown]
 # ## Section 2: Data Preparation
@@ -94,7 +94,7 @@ rfm_df = pd.DataFrame({
     'Monetary': df_clean['Total_Spending']
 })
 
-rfm_df.describe()
+display(rfm_df.describe())
 
 # Calculate RFM scores (1-5 scale for each dimension)
 # For Recency: lower values get higher scores (more recent is better)
@@ -141,9 +141,9 @@ rfm_df['Segment'] = rfm_df.apply(
 )
 
 print("RFM Segmentation Summary:")
-print(rfm_df['Segment'].value_counts())
+display(rfm_df['Segment'].value_counts())
 print("\nRFM Score Examples:")
-print(rfm_df[['Id', 'Recency', 'Frequency', 'Monetary', 
+display(rfm_df[['Id', 'Recency', 'Frequency', 'Monetary', 
               'R_Score', 'F_Score', 'M_Score', 'Segment']].head(10))
 
 # %% [markdown]
@@ -161,7 +161,7 @@ segment_analysis = rfm_df.groupby('Segment').agg({
 segment_analysis.columns = ['_'.join(col).strip() for col in segment_analysis.columns.values]
 segment_analysis = segment_analysis.rename(columns={'Id_count': 'Count'})
 print("\nDetailed Segment Analysis:")
-print(segment_analysis)
+display(segment_analysis)
 
 # %% [markdown]
 # ### 3.3 RFM Visualization
@@ -340,7 +340,7 @@ clv_analysis = clv_df.groupby('CLV_Segment').agg({
 clv_analysis.columns = ['_'.join(col).strip() for col in clv_analysis.columns.values]
 clv_analysis = clv_analysis.rename(columns={'Id_count': 'Customer_Count'})
 print("\nDetailed CLV Segment Analysis:")
-print(clv_analysis)
+display(clv_analysis)
 
 # %% [markdown]
 # ### 4.4 CLV Visualization
