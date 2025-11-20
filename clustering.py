@@ -34,11 +34,11 @@ df = pd.read_csv('data/customer_segmentation.csv')
 
 print("Dataset shape:", df.shape)
 print("\nFirst few rows:")
-print(df.head())
+display(df.head())
 print("\nDataset info:")
 print(df.info())
 print("\nBasic statistics:")
-print(df.describe())
+display(df.describe())
 print("\nMissing values:")
 print(df.isnull().sum())
 
@@ -58,9 +58,11 @@ df['Income'] = [i if i < df['Income'].quantile(.98) else df['Income'].quantile(.
 df['Year_Birth'] = [i if i < df['Year_Birth'].quantile(.98) else df['Year_Birth'].quantile(.99) for i in df["Year_Birth"]]
 
 # Remove rows with remaining missing values
-df = df.dropna()
+df.dropna(inplace=True)
 
 print(f"Dataset shape after cleaning: {df.shape}")
+plt_hist = px.histogram(df, x="Income")
+plt_hist.show()
 
 # %% 
 # STEP 2: Feature Engineering
@@ -101,8 +103,8 @@ df["WineShareSpend"] = df["MntWines"]/df["Total_Spending"]
 df["FruitShareSpend"] = df["MntFruits"]/df["Total_Spending"]
 
 print("New features created:")
-print(df[['Total_Spending', 'Total_Children', 'Total_Campaigns_Accepted', 
-          'Total_Purchases', 'Engagement_Score', 'Purchase_Diversity']].head())
+display(df[['Total_Spending', 'Total_Children', 'Total_Campaigns_Accepted', 
+            'Total_Purchases', 'Engagement_Score', 'Purchase_Diversity']].head())
 
 
 # %% 
@@ -132,7 +134,7 @@ plt_corr.show()
 print(f"\nClustering features selected: {len(clustering_features)}")
 print(f"Feature matrix shape: {X.shape}")
 print("\nFeature statistics before scaling:")
-print(X.describe())
+display(X.describe())
 
 # %% 
 # STEP 4: Standardize features
@@ -144,7 +146,7 @@ X_scaled = scaler.fit_transform(X)
 X_scaled = pd.DataFrame(X_scaled, columns=clustering_features)
 
 print("\nFeature statistics after scaling (standardization):")
-print(X_scaled.describe())
+display(X_scaled.describe())
 print("\nNote: All features now have mean ≈ 0 and std ≈ 1")
 
 # %% [markdown]
@@ -196,7 +198,7 @@ fig.show()
 
 # %%
 # Based on the elbow method and silhouette score, we select optimal k
-optimal_k = 5
+optimal_k = 3
 print(f"\nOptimal number of clusters selected: {optimal_k}")
 
 # %% [markdown]
