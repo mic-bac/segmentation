@@ -634,3 +634,5 @@ fig.update_yaxes(title_text="Count", row=2, col=2)
 
 fig.update_layout(height=600, title_text="Customer Segment Characteristics")
 fig.show()
+
+# %%
