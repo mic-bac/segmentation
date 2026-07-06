@@ -1,0 +1,21 @@
+[project]
+name = "segmentation"
+version = "0.1.0"
+description = "Segmentation teaching examples."
+requires-python = ">=3.13"
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "plotly",
+    "matplotlib",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "nbformat",
+]
+
+[tool.uv]
+package = false
