@@ -76,6 +76,7 @@ Dataset: https://archive.ics.uci.edu/dataset/502/online+retail+ii
 # %% 1. SETUP
 # ==============================================================================
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -94,6 +95,15 @@ from src.retail_data import (  # noqa: E402
     prepare,
     retention_by_recency_band,
 )
+from src.cltv_core import (  # noqa: E402
+    ACQUISITION_COST,
+    DISCOUNT_RATE,
+    GROSS_MARGIN,
+    MIN_TENURE_DAYS,
+    annual_contribution,
+    clv_multiplier,
+    clv_segments,
+)
 from src.rfm_scoring import segment_rfm  # noqa: E402
 
 pd.set_option("display.width", 200)
@@ -108,27 +118,30 @@ def show(fig) -> None:
         fig.show()
 
 
+def show_source(fn) -> None:
+    """Print the real source of a function, so the lesson can't drift from it.
+
+    The core CLTV formulas live in ``src/cltv_core.py`` — importing this script
+    would re-run the whole lesson, so anything that wants the formulas (the
+    teaching app, a notebook) needs them somewhere importable. Printing them here
+    means the code you read is the code that just ran.
+    """
+    print(f"\n--- {fn.__module__}.{fn.__name__} " + "-" * (48 - len(fn.__name__)))
+    print(inspect.getsource(fn))
+
+
 # ------------------------------------------------------------------------------
 # The business assumptions, named once and used everywhere.
 #
 # These are *inputs to the model*, not facts about the data. Every euro this
-# lesson reports depends on them, so they belong at the top of the file where you
-# can see and argue about them — never buried inside a formula.
+# lesson reports depends on them, so they are named constants you can see and
+# argue about — never buried inside a formula: GROSS_MARGIN = 30%,
+# DISCOUNT_RATE = 10%, ACQUISITION_COST = EUR 150, MIN_TENURE_DAYS = 365.
 #
 # Note what is NOT in this list: the retention rate. It used to be here as a
 # guess; section 5 measures it from the data instead.
 # ------------------------------------------------------------------------------
-GROSS_MARGIN = 0.30  # contribution margin: 30 cents of every euro of revenue
-DISCOUNT_RATE = 0.10  # d  — a euro next year is worth ~91 cents today
-ACQUISITION_COST = 150.0  # AC — marketing spend to win one customer
-
-# A floor on observed tenure, in days. A customer who ordered once has a tenure
-# of exactly zero, and dividing by that is a division by zero dressed up as a
-# business metric. A full year is the floor, not a token few days: it says "we
-# will not annualise from less than a year of history". A customer seen once
-# contributed one basket in their first year — not one basket every month for
-# ever, which is what a 30-day floor would silently claim. See section 3.
-MIN_TENURE_DAYS = 365
+# They live in src/cltv_core.py so the teaching app imports the same numbers.
 
 
 # %% 2. LOAD THE TRANSACTION LOG
@@ -149,40 +162,7 @@ print(f"Aggregated to {len(df):,} customers")
 # ==============================================================================
 
 
-def annual_contribution(
-    customers: pd.DataFrame,
-    gross_margin: float = GROSS_MARGIN,
-    min_tenure_days: int = MIN_TENURE_DAYS,
-) -> pd.Series:
-    """GC_i — the yearly gross contribution of each customer.
-
-    Two steps, and one trap.
-
-    Revenue is not value: selling 100 of anything at a 30% margin contributes 30,
-    not 100. So the margin comes off first.
-
-    Then the total has to be annualised, because these customers have been around
-    for wildly different lengths of time — from a single day to the full two
-    years — and their raw totals are not comparable until they are put on the
-    same footing::
-
-        GC_i = (revenue / years observed) * margin
-
-    **The trap** is that "years observed" is zero for anyone who ordered once:
-    their first and last purchase are the same day. Divide by that and you get
-    infinity, and because a large share of this customer base ordered exactly
-    once, that is not an edge case — it is a large share of your answer.
-
-    The floor is where this gets decided, and it is not a formality. Floor at 30
-    days and a customer who spent 200 in one visit is recorded as contributing
-    2,400 a year, which promotes one-time buyers into the most valuable segment
-    you have. Floor at a **year** and the same customer contributes 200 in their
-    first year, which is what actually happened. Short floors do not protect you
-    from the division by zero so much as hide it behind a plausible number.
-    """
-    observed_years = np.maximum(customers["TenureDays"], min_tenure_days) / 365.25
-    return customers["Revenue"] / observed_years * gross_margin
-
+show_source(annual_contribution)
 
 df["GC"] = annual_contribution(df)
 
@@ -338,17 +318,7 @@ show(fig_curve)
 # ==============================================================================
 
 
-def clv_multiplier(
-    retention_rate: float | pd.Series = MEASURED_RETENTION,
-    discount_rate: float = DISCOUNT_RATE,
-) -> float | pd.Series:
-    """The factor ``Rr / (1 - Rr + d)`` that turns one year of GC into a lifetime.
-
-    Read it as "how many years' worth of contribution a customer is good for, in
-    today's money". At Rr = 0.60 and d = 0.10 it is 1.2 years; at Rr = 0.90 it is
-    4.5. Retention is the lever, by a wide margin — see section 7.
-    """
-    return retention_rate / (1 - retention_rate + discount_rate)
+show_source(clv_multiplier)
 
 
 def predictive_clv(
@@ -400,8 +370,8 @@ print("6. PREDICTIVE CLTV (forward-looking, closed form)")
 print("-" * 78)
 print(f"Rr = {MEASURED_RETENTION:.1%} (measured)   d = {DISCOUNT_RATE:.0%} (assumed)   "
       f"AC = EUR {ACQUISITION_COST:,.0f} (assumed)")
-print(f"Multiplier Rr / (1 - Rr + d) = {clv_multiplier():.2f}  "
-      f"-> each customer is worth {clv_multiplier():.2f} years of contribution")
+print(f"Multiplier Rr / (1 - Rr + d) = {clv_multiplier(MEASURED_RETENTION):.2f}  "
+      f"-> each customer is worth {clv_multiplier(MEASURED_RETENTION):.2f} years of contribution")
 print(df["CLV_Predictive"].describe().round(1).to_string())
 
 # 6b. The closed form is the limit of the finite-horizon sum.
@@ -412,7 +382,7 @@ for years in [1, 2, 3, 5, 10, 20, 50]:
     multiplier = sum(ratio**t for t in range(1, years + 1))
     mean_value = horizon_clv(df, years).mean()
     print(f"  {years:>8} y  {multiplier:>11.3f}  {mean_value:>12,.0f}")
-print(f"  {'infinite':>10}  {clv_multiplier():>11.3f}  {df['CLV_Predictive'].mean():>12,.0f}")
+print(f"  {'infinite':>10}  {clv_multiplier(MEASURED_RETENTION):>11.3f}  {df['CLV_Predictive'].mean():>12,.0f}")
 print("The tail terms stop mattering quickly, so the closed form and a medium-term plan")
 print("give the same answer — the infinite horizon is a convenience, not a claim that")
 print("customers live forever.")
@@ -689,15 +659,7 @@ print("than they will ever return — the segment to stop buying.")
 # ==============================================================================
 
 
-def clv_segments(clv: pd.Series) -> pd.Series:
-    """Split the base into four value tiers by CLTV quartile.
-
-    Quartiles, not fixed euro thresholds: they adapt to the business and keep the
-    tiers usefully sized. The cost is that "Premium" is always exactly 25% of
-    customers, however good or bad the year was.
-    """
-    return pd.qcut(clv, 4, labels=["Low Value", "Medium Value", "High Value", "Premium"])
-
+show_source(clv_segments)
 
 df["CLV_Segment"] = clv_segments(df["CLV_Predictive"])
 
@@ -738,14 +700,14 @@ print("\nRFM segment vs CLTV tier — the two views combined:")
 combined = pd.crosstab(df["RFM_Segment"], df["CLV_Segment"])
 print(combined.to_string())
 print(
-    "\nRead it as a decision table. 'At Risk' customers sitting in the Premium tier are\n"
+    "\nRead it as a decision table. 'Can't Lose Them' customers in the Premium tier are\n"
     "the single most urgent group in the business: high value, and walking out.\n"
     "'Lost' customers in the Low tier are the cheapest thing to stop spending on."
 )
 
-at_risk_premium = int(combined.loc["At Risk", "Premium"]) if "At Risk" in combined.index else 0
+at_risk_premium = int(combined.loc["Can't Lose Them", "Premium"]) if "Can't Lose Them" in combined.index else 0
 print(f"\nHere that urgent group is {at_risk_premium} customers, worth EUR "
-      f"{df.loc[(df['RFM_Segment'] == 'At Risk') & (df['CLV_Segment'] == 'Premium'), 'CLV_Predictive'].sum():,.0f} "
+      f"{df.loc[(df['RFM_Segment'] == "Can't Lose Them") & (df['CLV_Segment'] == 'Premium'), 'CLV_Predictive'].sum():,.0f} "
       "in expected lifetime value.")
 
 fig_segments = go.Figure(

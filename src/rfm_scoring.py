@@ -151,9 +151,13 @@ LADDER_RULES = [
     ("Recent Customers", lambda r, f, m: (r >= 4) & (f <= 1)),
     # Recent, spends well, has not made a habit of it yet — grow the frequency.
     ("Potential Loyalists", lambda r, f, m: (r >= 4) & (f <= 2) & (m >= 3)),
-    # Were valuable, have gone quiet. The highest-urgency segment.
-    ("At Risk", lambda r, f, m: (r <= 2) & (f >= 4) & (m >= 4)),
-    ("Can't Lose Them", lambda r, f, m: (r <= 2) & (f >= 3)),
+    # Were the best customers (top frequency AND top spend), have gone quiet.
+    # The highest-urgency segment — the conventional meaning of the name: you
+    # cannot afford to lose them. Checked before At Risk, whose rule also
+    # matches them, so the most valuable lapsed customers are named as such.
+    ("Can't Lose Them", lambda r, f, m: (r <= 2) & (f >= 4) & (m >= 4)),
+    # Bought regularly, now slipping away — a broader, less valuable group.
+    ("At Risk", lambda r, f, m: (r <= 2) & (f >= 3)),
     # Quiet, infrequent, low value — cheapest to let go.
     ("Lost", lambda r, f, m: (r <= 2) & (f <= 2) & (m <= 2)),
 ]

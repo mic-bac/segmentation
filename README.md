@@ -19,6 +19,7 @@ segmentation/
 ├── fetch_data.py              one-time download of the transaction dataset
 ├── src/retail_data.py         transaction log: load, clean, aggregate, cohorts
 ├── src/rfm_scoring.py         RFM scoring (rfm.py teaches it, cltv.py reuses it)
+├── src/cltv_core.py           CLTV formulas + business assumptions (cltv.py teaches them)
 ├── src/personality_data.py    customer attributes for the clustering lesson
 ├── rfm.py                     lesson 1 — Recency, Frequency, Monetary
 ├── cltv.py                    lesson 2 — Customer Lifetime Value
@@ -102,7 +103,9 @@ Three numbers per customer, aggregated from the transaction log, each scored 1 (
 The three scores form a *profile* (`533`), not a sum: `533` and `155` both total 11 but are
 opposite customers needing opposite treatment. The lesson builds two segmentations from
 those scores — the eight-octant **RFM cube** (*RFM-Würfel*) and a named business-rule ladder
-(Champions, At Risk, Lost, …) — and shows where two defensible rule sets disagree.
+(Champions, Can't Lose Them, At Risk, Lost, …) — and shows where two defensible rule sets
+disagree. *Can't Lose Them* is the top-frequency, top-spend customer who has gone quiet;
+*At Risk* is the broader group of regular buyers slipping away.
 
 Strengths: trivial to implement, and a good predictor of who responds next. Limits: it
 measures **outcomes only** (*misst nur Endergebnisse*), it says nothing about the future,
