@@ -298,6 +298,24 @@ def stability(
     return float(np.mean(agreements)), float(np.std(agreements))
 
 
+
+def stability_verdict(ari: float, silhouette: float) -> str:
+    """Read stability TOGETHER with separation — either one alone misleads.
+
+    A high adjusted Rand index only says the algorithm finds the *same* partition
+    on every resample. An algorithm can do that reliably while finding nothing:
+    DBSCAN with a tight ``eps`` returns the same handful of tiny pockets plus one
+    big blob every time — perfectly stable, and useless as segments. So a
+    clustering whose clusters barely separate (silhouette below 0.1) is called
+    what it is, however stable it looks.
+    """
+    if not silhouette >= 0.10:  # also catches NaN: a single cluster has no separation
+        return "stable, but no real structure" if ari > 0.75 else "no real structure"
+    if ari > 0.75:
+        return "solid"
+    return "shaky" if ari > 0.5 else "unreliable"
+
+
 def pca_projection(
     X: np.ndarray, random_state: int = RANDOM_STATE
 ) -> tuple[np.ndarray, np.ndarray]:

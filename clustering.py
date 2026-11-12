@@ -81,6 +81,7 @@ from src.clustering_core import (  # noqa: E402
     scale_features,
     score_clustering,
     stability,
+    stability_verdict,
     sweep_k,
 )
 from src.personality_data import CLUSTERING_FEATURES, prepare  # noqa: E402
@@ -414,6 +415,7 @@ show(fig_sil)
 
 
 show_source(stability)
+show_source(stability_verdict)
 
 print("\n" + "-" * 78)
 print("10. STABILITY UNDER RESAMPLING (adjusted Rand index, 5 runs at 80%)")
@@ -422,12 +424,14 @@ print("-" * 78)
 for name, spec in ALGORITHMS.items():
     mean_ari, std_ari = stability(spec["build"], X, labels[name])
     scores.loc[name, "stability"] = mean_ari
-    verdict = "solid" if mean_ari > 0.75 else "shaky" if mean_ari > 0.5 else "unreliable"
+    verdict = stability_verdict(mean_ari, scores.loc[name, "silhouette"])
     print(f"  {name:<14} ARI = {mean_ari:.3f} +/- {std_ari:.3f}   {verdict}")
 
 print("\n1.0 = the same customers grouped together every time; 0.0 = chance.")
 print("A clustering you intend to build campaigns on should be well above 0.75 — the")
 print("segments have to survive next quarter's data, not just this quarter's.")
+print("Stable is necessary, not sufficient: an algorithm can reliably find the same")
+print("meaningless partition. The verdict therefore also checks separation (silhouette).")
 
 
 # %% 11. THE HIERARCHY, DRAWN
