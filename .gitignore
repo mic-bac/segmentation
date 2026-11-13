@@ -1,1 +1,10 @@
+# Kaggle download — see README ("Data"). The lessons fall back to synthetic
+# data when this folder is absent, so a fresh clone still runs.
 data/
+
+# uv virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

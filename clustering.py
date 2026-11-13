@@ -1,638 +1,566 @@
-# %% 
-# ==============================================================================
-# CUSTOMER SEGMENTATION USING CLUSTERING ALGORITHMS
-# ==============================================================================
-# This notebook demonstrates customer segmentation using three popular clustering
-# algorithms: K-Means, Hierarchical Clustering, and DBSCAN.
-# Students will learn how to prepare data, apply different clustering techniques,
-# and compare their results using various visualization and evaluation metrics.
+"""
+==============================================================================
+CLUSTERING — LETTING THE DATA FIND THE SEGMENTS
+==============================================================================
+Course: Big Data and Machine Learning
+Topic: Unsupervised customer segmentation with Python
+
+Business question
+-----------------
+"How do we segment customers holistically, by need rather than by till receipt?"
+
+RFM (``rfm.py``) and CLTV (``cltv.py``) both rank customers on purchase outcomes.
+Neither can tell you *who* a segment is. Clustering can: it groups customers by
+similarity across **everything you know about them at once** — income, age,
+household, channel behaviour, campaign response — and hands back groups you can
+describe in a sentence and target with a campaign.
+
+The catch: this is **unsupervised** learning. There is no correct answer to
+check against, no accuracy to report. A clustering is good if it is stable,
+interpretable, and useful for the decision at hand — three things no single
+number measures. This lesson therefore spends as much effort on *evaluating*
+clusterings as on producing them.
+
+The four algorithms
+-------------------
+    K-Means         centroid-based    fast, needs k in advance
+    Hierarchical    connectivity      builds a full tree, very interpretable
+    DBSCAN          density-based     finds odd shapes, isolates outliers
+    MeanShift       density modes     finds k itself, but slow
+
+Learning objectives
+-------------------
+1. Understand why standardisation is mandatory before any distance-based method
+2. Choose k with the elbow and silhouette methods — and see where they fail
+3. Run four algorithm families and read what each assumes about a "cluster"
+4. Evaluate without labels: silhouette, Calinski-Harabasz, Davies-Bouldin
+5. Inspect clusters visually via a 2D projection (PCA)
+6. Test whether clusters are *stable* under resampling — most reporting skips this
+7. Profile and name the segments, then feed them back to RFM and CLTV
+
+Run it
+------
+    uv sync
+    uv run python clustering.py
+
+    SHOW_FIGURES=0 uv run python clustering.py    # numbers only, no browser tabs
+
+Dataset: https://www.kaggle.com/datasets/vishakhdapat/customer-segmentation-clustering
+==============================================================================
+"""
+
+# %% 1. SETUP
 # ==============================================================================
 
-# %% [markdown]
-# # 1. SETUP AND IMPORTS
+import inspect
+import os
+import sys
+from pathlib import Path
 
-# Import libraries for data manipulation, visualization, and clustering
-import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, AgglomerativeClustering, DBSCAN
-from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
-
-# Set random seed for reproducibility
-np.random.seed(42)
-
-# %% [markdown]
-# # 2. LOAD AND EXPLORE DATA
-#https://www.kaggle.com/datasets/vishakhdapat/customer-segmentation-clustering
-
-# Load the customer segmentation dataset
-df = pd.read_csv('data/customer_segmentation.csv')
-
-print("Dataset shape:", df.shape)
-print("\nFirst few rows:")
-display(df.head())
-print("\nDataset info:")
-print(df.info())
-print("\nBasic statistics:")
-display(df.describe())
-print("\nMissing values:")
-print(df.isnull().sum())
-
-# %% [markdown]
-# # 3. DATA PREPARATION
-
-# STEP 1: Clean the data
-# Handle missing values in Income column (if any)
-df['Income'] = pd.to_numeric(df['Income'], errors='coerce')
-df['Income'].fillna(df['Income'].median(), inplace=True)
-
-plt_hist = px.histogram(df, x="Income")
-plt_hist.show()
-# Cut-off potential outliers
-df['Income'] = [i if i < df['Income'].quantile(.98) else df['Income'].quantile(.99) for i in df["Income"]]
-
-df['Year_Birth'] = [i if i < df['Year_Birth'].quantile(.98) else df['Year_Birth'].quantile(.99) for i in df["Year_Birth"]]
-
-# Remove rows with remaining missing values
-df.dropna(inplace=True)
-
-print(f"Dataset shape after cleaning: {df.shape}")
-plt_hist = px.histogram(df, x="Income")
-plt_hist.show()
-
-# %% 
-# STEP 2: Feature Engineering
-# Create new features for better customer understanding
-
-# Calculate total spending across all product categories
-spending_cols = ['MntWines', 'MntFruits', 'MntMeatProducts', 
-                 'MntFishProducts', 'MntSweetProducts', 'MntGoldProds']
-df['Total_Spending'] = df[spending_cols].sum(axis=1)
-
-# Calculate total children (kids + teens)
-df['Total_Children'] = df['Kidhome'] + df['Teenhome']
-
-# Calculate total marketing campaign response
-campaign_cols = ['AcceptedCmp1', 'AcceptedCmp2', 'AcceptedCmp3', 
-                 'AcceptedCmp4', 'AcceptedCmp5']
-df['Total_Campaigns_Accepted'] = df[campaign_cols].sum(axis=1)
-
-# Calculate total purchases
-purchase_cols = ['NumWebPurchases', 'NumCatalogPurchases', 'NumStorePurchases']
-df['Total_Purchases'] = df[purchase_cols].sum(axis=1)
-
-# Calculate customer engagement score (0-1)
-df['Engagement_Score'] = (df['Total_Purchases'] + df['NumWebVisitsMonth']) / \
-                         (df['Total_Purchases'].max() + df['NumWebVisitsMonth'].max())
-
-# Calculate purchasing diversity (number of different channels used)
-df['Purchase_Diversity'] = (df['NumWebPurchases'] > 0).astype(int) + \
-                           (df['NumCatalogPurchases'] > 0).astype(int) + \
-                           (df['NumStorePurchases'] > 0).astype(int)
-
-# Estimating age
-df["Age"] = int(df.Dt_Customer.max()[-4:])-df['Year_Birth']
-
-# Meat Share
-df["MeatShareSpend"] = df["MntMeatProducts"]/df["Total_Spending"]
-df["WineShareSpend"] = df["MntWines"]/df["Total_Spending"]
-df["FruitShareSpend"] = df["MntFruits"]/df["Total_Spending"]
-
-print("New features created:")
-display(df[['Total_Spending', 'Total_Children', 'Total_Campaigns_Accepted', 
-            'Total_Purchases', 'Engagement_Score', 'Purchase_Diversity']].head())
-
-
-# %% 
-# STEP 3: Select features for clustering
-# We focus on behavioral and spending features that best represent customer segments
-
-clustering_features = [
-    'Income',                    # Customer income (purchasing power)
-    #'Total_Spending',            # Total amount spent------------
-    'Recency',                   # Days since last purchase
-    #'Total_Purchases',           # Frequency of purchases--------
-    'Total_Campaigns_Accepted',  # Campaign response (engagement)
-    'Total_Children',            # Family size
-    'Engagement_Score',          # Calculated engagement metric
-    'Purchase_Diversity',        # How many channels customer uses
-    'MeatShareSpend',
-    "WineShareSpend",
-    "FruitShareSpend"
-]
-
-# Create the feature matrix for clustering
-X = df[clustering_features].copy()
-corr = X.select_dtypes(include="number").corr().round(2)
-plt_corr = px.imshow(corr, text_auto=True)
-plt_corr.show()
-
-print(f"\nClustering features selected: {len(clustering_features)}")
-print(f"Feature matrix shape: {X.shape}")
-print("\nFeature statistics before scaling:")
-display(X.describe())
-
-# %% 
-# STEP 4: Standardize features
-# Standardization is crucial because clustering algorithms use distance metrics,
-# and features with large ranges can dominate the clustering process
-
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-X_scaled = pd.DataFrame(X_scaled, columns=clustering_features)
-
-print("\nFeature statistics after scaling (standardization):")
-display(X_scaled.describe())
-print("\nNote: All features now have mean ≈ 0 and std ≈ 1")
-
-# %% [markdown]
-# # 5. DETERMINING OPTIMAL NUMBER OF CLUSTERS
-
-# For K-Means, we need to determine the optimal number of clusters
-# We'll use the Elbow Method and Silhouette Analysis
-
-# %% 
-# Elbow Method: Try different numbers of clusters and plot inertia
-inertias = []
-silhouette_scores = []
-K_range = range(2, 11)
-
-print("Computing K-Means for different values of k...")
-for k in K_range:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    kmeans.fit(X_scaled)
-    inertias.append(kmeans.inertia_)
-    silhouette_scores.append(silhouette_score(X_scaled, kmeans.labels_))
-    print(f"k={k}: Inertia={kmeans.inertia_:.2f}, Silhouette Score={silhouette_scores[-1]:.3f}")
-
-# %% 
-# Visualize the Elbow Method and Silhouette Scores
-fig = make_subplots(
-    rows=1, cols=2,
-    subplot_titles=("Elbow Method (Inertia)", "Silhouette Score by K")
-)
-
-fig.add_trace(
-    go.Scatter(x=list(K_range), y=inertias, mode='lines+markers',
-               name='Inertia', marker=dict(size=8, color='#1f77b4')),
-    row=1, col=1
-)
-
-fig.add_trace(
-    go.Scatter(x=list(K_range), y=silhouette_scores, mode='lines+markers',
-               name='Silhouette Score', marker=dict(size=8, color='#ff7f0e')),
-    row=1, col=2
-)
-
-fig.update_xaxes(title_text="Number of Clusters (k)", row=1, col=1)
-fig.update_yaxes(title_text="Inertia", row=1, col=1)
-fig.update_xaxes(title_text="Number of Clusters (k)", row=1, col=2)
-fig.update_yaxes(title_text="Silhouette Score", row=1, col=2)
-
-fig.update_layout(height=400, title_text="Optimal Cluster Selection")
-fig.show()
-
-# %%
-# Based on the elbow method and silhouette score, we select optimal k
-optimal_k = 3
-print(f"\nOptimal number of clusters selected: {optimal_k}")
-
-# %% [markdown]
-# # 6. CLUSTERING ALGORITHM 1: K-MEANS CLUSTERING
-
-# K-Means is one of the most popular clustering algorithms in practice.
-# It partitions data into k clusters by minimizing within-cluster variance.
-# 
-# Advantages:
-# - Fast and scalable
-# - Easy to understand and implement
-# - Works well for convex, roughly spherical clusters
-#
-# Disadvantages:
-# - Requires specifying number of clusters beforehand
-# - Sensitive to outliers
-# - Assumes similar cluster sizes
-
-print("=" * 70)
-print("CLUSTERING ALGORITHM 1: K-MEANS")
-print("=" * 70)
-
-kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-kmeans_labels = kmeans.fit_predict(X_scaled)
-
-# Add cluster labels to dataframe
-df['KMeans_Cluster'] = kmeans_labels
-
-print(f"\nK-Means Results (k={optimal_k}):")
-print(f"Cluster distribution:\n{pd.Series(kmeans_labels).value_counts().sort_index()}")
-print(f"Silhouette Score: {silhouette_score(X_scaled, kmeans_labels):.3f}")
-print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, kmeans_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
-print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, kmeans_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
-
-# %% [markdown]
-# # 7. CLUSTERING ALGORITHM 2: HIERARCHICAL CLUSTERING (AGGLOMERATIVE)
-
-# Hierarchical Agglomerative Clustering builds a hierarchy of clusters
-# by recursively merging the closest clusters.
-#
-# Advantages:
-# - Provides hierarchical structure (dendrogram)
-# - More flexible than K-Means
-# - Can use different linkage criteria (Ward, complete, average, single)
-#
-# Disadvantages:
-# - Computationally more expensive
-# - Cannot undo previous merges (greedy approach)
-# - Results can be sensitive to noise and outliers
-
-print("\n" + "=" * 70)
-print("CLUSTERING ALGORITHM 2: HIERARCHICAL CLUSTERING (AGGLOMERATIVE)")
-print("=" * 70)
-
-hierarchical = AgglomerativeClustering(n_clusters=optimal_k, linkage='ward')
-hierarchical_labels = hierarchical.fit_predict(X_scaled)
-
-# Add cluster labels to dataframe
-df['Hierarchical_Cluster'] = hierarchical_labels
-
-print(f"\nHierarchical Clustering Results (linkage='ward', n_clusters={optimal_k}):")
-print(f"Cluster distribution:\n{pd.Series(hierarchical_labels).value_counts().sort_index()}")
-print(f"Silhouette Score: {silhouette_score(X_scaled, hierarchical_labels):.3f}")
-print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, hierarchical_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
-print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, hierarchical_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
-
-# %% [markdown]
-# # 8. CLUSTERING ALGORITHM 3: DBSCAN (Density-Based Clustering)
-
-# DBSCAN (Density-Based Spatial Clustering of Applications with Noise)
-# identifies clusters as areas of high density separated by low-density regions.
-#
-# Advantages:
-# - Discovers arbitrary cluster shapes (not just spherical)
-# - Robust to outliers (assigns them as noise, label=-1)
-# - Does NOT require specifying number of clusters
-# - Good for spatial data
-#
-# Disadvantages:
-# - Sensitive to eps and min_samples parameters
-# - Struggles with varying cluster densities
-# - May not work well with very high-dimensional data
-
-print("\n" + "=" * 70)
-print("CLUSTERING ALGORITHM 3: DBSCAN (DENSITY-BASED)")
-print("=" * 70)
-
-# For DBSCAN, we need to determine eps (neighborhood radius)
-# A common heuristic is to plot the k-distance graph and look for the "elbow"
-# For simplicity, we'll use a reasonable eps value
-
-eps = 1.5
-min_samples = 5
-
-dbscan = DBSCAN(eps=eps, min_samples=min_samples)
-dbscan_labels = dbscan.fit_predict(X_scaled)
-
-# Add cluster labels to dataframe
-df['DBSCAN_Cluster'] = dbscan_labels
-
-n_clusters_dbscan = len(set(dbscan_labels)) - (1 if -1 in dbscan_labels else 0)
-n_noise = list(dbscan_labels).count(-1)
-
-print(f"\nDBSCAN Results (eps={eps}, min_samples={min_samples}):")
-print(f"Number of clusters: {n_clusters_dbscan}")
-print(f"Number of noise points (outliers): {n_noise}")
-print(f"Cluster distribution:")
-for cluster_id in sorted(set(dbscan_labels)):
-    count = sum(1 for x in dbscan_labels if x == cluster_id)
-    label = "Noise" if cluster_id == -1 else f"Cluster {cluster_id}"
-    print(f"  {label}: {count} points ({count/len(dbscan_labels)*100:.1f}%)")
-
-if n_clusters_dbscan > 1:
-    print(f"Silhouette Score: {silhouette_score(X_scaled, dbscan_labels):.3f}")
-    print(f"Calinski-Harabasz Index: {calinski_harabasz_score(X_scaled, dbscan_labels):.2f}") # The score is defined as ratio of the sum of between-cluster dispersion and of within-cluster dispersion. Higher is better
-    print(f"Davies-Bouldin Index: {davies_bouldin_score(X_scaled, dbscan_labels):.3f}") # It measures the average similarity between each cluster and its most similar neighboring cluster. Lower is better (close to 0)
-else:
-    print("Note: DBSCAN found too few clusters for meaningful metrics.")
-
-# %% [markdown]
-# # 9. VISUALIZATION OF CLUSTERING RESULTS
-
-# Create 3D scatter plots using real features (Income, Total_Spending, Recency)
-# This gives us intuitive, interpretable visualizations of the clusters
-
-# %% 
-# Visualization 1: K-Means Clusters in 3D Feature Space
-fig_kmeans = go.Figure(data=[go.Scatter3d(
-    x=df['Income'],
-    y=df['Total_Spending'],
-    z=df['Recency'],
-    mode='markers',
-    marker=dict(
-        size=4,
-        color=kmeans_labels,
-        colorscale='Viridis',
-        showscale=True,
-        colorbar=dict(title="Cluster"),
-        opacity=0.8
-    ),
-    text=[f"Income: ${x:,.0f}<br>Spending: ${y:,.0f}<br>Recency: {z:.0f} days<br>Cluster: {c}" 
-          for x, y, z, c in zip(df['Income'], df['Total_Spending'], df['Recency'], kmeans_labels)],
-    hoverinfo='text'
-)])
-
-fig_kmeans.update_layout(
-    title='K-Means Clustering (3D Feature Space)',
-    scene=dict(
-        xaxis_title='Income ($)',
-        yaxis_title='Total Spending ($)',
-        zaxis_title='Recency (days)',
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.3))
-    ),
-    height=700,
-    width=900
-)
-fig_kmeans.show()
-
-# %% 
-# Visualization 2a: Hierarchical Clustering Dendrogram
-# A dendrogram is a tree diagram that shows how clusters are hierarchically merged
-# together. It's very useful for understanding the hierarchical structure and
-# deciding on the optimal number of clusters by looking at the "elbow"
-
-print("\nGenerating Hierarchical Clustering Dendrogram...")
-
 from scipy.cluster.hierarchy import dendrogram, linkage
+from sklearn.cluster import DBSCAN, KMeans
+from sklearn.metrics import silhouette_samples
 
-# Compute the linkage matrix (contains info about how clusters are merged)
-# Using Ward's method (same as we used in AgglomerativeClustering)
-linkage_matrix = linkage(X_scaled, method='ward')
+# Make `src/` importable no matter where this script is launched from.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from src.clustering_core import (  # noqa: E402
+    FAMILIES,
+    build_algorithms,
+    choose_eps,
+    choose_k,
+    cluster_fingerprints,
+    estimate_meanshift_bandwidth,
+    name_segment,
+    pca_projection,
+    profile_clusters,
+    scale_features,
+    score_clustering,
+    stability,
+    stability_verdict,
+    sweep_k,
+)
+from src.personality_data import CLUSTERING_FEATURES, prepare  # noqa: E402
 
-# Create dendrogram using plotly (custom implementation)
-# Note: scipy's dendrogram is in matplotlib, but we'll create an interactive version
+pd.set_option("display.width", 200)
+pd.set_option("display.max_columns", 30)
 
-# For better visualization, we'll use a sample of data if dataset is very large
-sample_size = min(50, len(X_scaled))  # Limit to 50 points for clarity
-if len(X_scaled) > sample_size:
-    sample_indices = np.random.choice(len(X_scaled), sample_size, replace=False)
-    X_sample = X_scaled.iloc[sample_indices]
-    linkage_matrix = linkage(X_sample, method='ward')
-    dendro_title = f'Hierarchical Clustering Dendrogram (Sample of {sample_size} customers)'
-else:
-    dendro_title = 'Hierarchical Clustering Dendrogram (All customers)'
+RANDOM_STATE = 42
+SHOW_FIGURES = os.environ.get("SHOW_FIGURES", "1") != "0"
 
-# Calculate dendrogram data manually for plotly visualization
-from scipy.cluster.hierarchy import dendrogram as scipy_dendrogram
+# Per-customer silhouettes for the plot in section 9 stay local: they cannot be
+# subsampled the way the summary score can (see section 9).
+SILHOUETTE_PLOT_SAMPLE = 800
 
-dendro_data = scipy_dendrogram(linkage_matrix, no_plot=True)
 
-# Create dendrogram plot using plotly
-fig_dendro = go.Figure()
+def show(fig) -> None:
+    """Display a figure unless SHOW_FIGURES=0."""
+    if SHOW_FIGURES:
+        fig.show()
 
-# Draw the dendrogram lines
-def plot_dendrogram(dendro_data):
-    """Helper function to plot dendrogram from scipy data"""
-    icoord = np.array(dendro_data['icoord'])
-    dcoord = np.array(dendro_data['dcoord'])
-    
-    for i in range(len(icoord)):
-        fig_dendro.add_trace(go.Scatter(
-            x=icoord[i],
-            y=dcoord[i],
-            mode='lines',
-            line=dict(color='#1f77b4', width=1),
-            hoverinfo='y',
-            showlegend=False
-        ))
 
-plot_dendrogram(dendro_data)
+def show_source(fn) -> None:
+    """Print the real source of a function, so the lesson can't drift from it.
 
-# Add horizontal line at cut height (optimal number of clusters)
-cut_height = linkage_matrix[-optimal_k+1, 2]  # Height where we cut for k clusters
-fig_dendro.add_hline(
-    y=cut_height,
-    line_dash="dash",
-    line_color="red",
-    annotation_text=f"Cut line for {optimal_k} clusters",
-    annotation_position="right"
+    The clustering primitives live in ``src/clustering_core.py`` — importing this
+    script would re-run the whole lesson, so anything that wants the functions
+    (the teaching app, a notebook) needs them somewhere importable. Printing them
+    here means the code you read is the code that just ran.
+    """
+    print(f"\n--- {fn.__module__}.{fn.__name__} " + "-" * (48 - len(fn.__name__)))
+    print(inspect.getsource(fn))
+
+
+# %% 2. LOAD THE CUSTOMER BASE
+# ==============================================================================
+
+print("=" * 78)
+print("CLUSTERING — UNSUPERVISED CUSTOMER SEGMENTATION")
+print("=" * 78)
+
+df, source = prepare()
+
+
+# %% 3. THE FEATURE MATRIX, AND WHY IT MUST BE STANDARDISED
+# ==============================================================================
+
+
+show_source(scale_features)
+
+X, scaler = scale_features(df, CLUSTERING_FEATURES)
+
+print("\n" + "-" * 78)
+print("3. FEATURES AND STANDARDISATION")
+print("-" * 78)
+print(f"Clustering on {len(CLUSTERING_FEATURES)} features x {len(df):,} customers")
+
+spread = pd.DataFrame(
+    {
+        "raw_std": df[CLUSTERING_FEATURES].std(),
+        "scaled_std": pd.Series(X.std(axis=0), index=CLUSTERING_FEATURES),
+    }
+).round(2)
+print(spread.to_string())
+dominant = spread["raw_std"].idxmax()
+print(f"\nBefore scaling, '{dominant}' has a spread "
+      f"{spread['raw_std'].max() / spread['raw_std'].drop(dominant).max():,.0f}x larger than "
+      "every other feature:")
+print("it would have decided the clusters single-handedly. After scaling, all features "
+      "get an equal vote.")
+
+
+# %% 4. THE ALGORITHM FAMILIES
+# ==============================================================================
+# "Clustering" is not one method — it is a set of incompatible answers to the
+# question "what counts as a cluster?". Each family draws different shapes.
+
+print("\n" + "-" * 78)
+print("4. THE ALGORITHM FAMILIES")
+print("-" * 78)
+print(FAMILIES.to_string(index=False))
+print("\nThis lesson runs one algorithm from each of the first three families, plus")
+print("MeanShift — a mode-seeking method that, like DBSCAN, works out k for itself.")
+
+
+# %% 5. HOW MANY CLUSTERS? THE ELBOW AND SILHOUETTE METHODS
+# ==============================================================================
+
+
+show_source(sweep_k)
+sweep = sweep_k(X, range(2, 11))
+metric_choice = choose_k(sweep)
+
+print("\n" + "-" * 78)
+print("5. CHOOSING k")
+print("-" * 78)
+print(sweep.round(3).to_string(index=False))
+print(f"\nAll three quality metrics agree on their favourite: k = {metric_choice}.")
+
+# ...and we are going to overrule them. Deliberately, and with a reason.
+#
+# k=2 splits the base into "spends a lot" and "spends little". That is true, and
+# useless: it is roughly what RFM's monetary score already told us, and you
+# cannot run a marketing department on two segments. Look at the silhouette
+# column again — between k=4, 5 and 6 it varies by less than 0.01, which is well
+# inside the noise. The metrics are not distinguishing those options; they only
+# rule out the *bad* ones. So the choice among them is ours to make on
+# interpretability, which is exactly what the evaluation literature says to do.
+K = 4
+
+print(f"We will use k = {K} instead, and it is worth being explicit about why:")
+print("  * k=2 scores best but splits customers into 'spends a lot' / 'spends little' —")
+print("    a distinction RFM already gave us for free.")
+sil = sweep.set_index("k")["silhouette"]
+print(f"  * between k=4, 5 and 6 the silhouette varies by only "
+      f"{sil.loc[[4, 5, 6]].max() - sil.loc[[4, 5, 6]].min():.3f}. The metric cannot separate")
+print("    them, so it is not the thing making this decision.")
+print(f"  * k={K} gives four segments a marketing team can actually name and act on"
+      f" (section 12).")
+print("\nThis is the normal state of affairs in unsupervised learning: the metrics narrow")
+print("the field, then a human picks. Pretending the number chose itself is the mistake.")
+
+fig_k = make_subplots(
+    rows=1, cols=2, subplot_titles=("Elbow: inertia (always falls)", "Silhouette (can peak)")
+)
+fig_k.add_trace(
+    go.Scatter(x=sweep["k"], y=sweep["inertia"], mode="lines+markers", name="Inertia",
+               line=dict(color="#4C78A8")),
+    row=1, col=1,
+)
+fig_k.add_trace(
+    go.Scatter(x=sweep["k"], y=sweep["silhouette"], mode="lines+markers", name="Silhouette",
+               line=dict(color="#F58518")),
+    row=1, col=2,
+)
+for col in (1, 2):
+    fig_k.add_vline(x=K, line_dash="dash", line_color="grey",
+                    annotation_text=f"chosen k={K}", row=1, col=col)
+fig_k.update_xaxes(title_text="Number of clusters (k)")
+fig_k.update_layout(height=420, title_text="Choosing k", showlegend=False)
+show(fig_k)
+
+
+# %% 6. DBSCAN NEEDS A RADIUS, NOT A k
+# ==============================================================================
+
+
+show_source(choose_eps)
+
+MIN_SAMPLES = 5
+EPS, kdist_curve = choose_eps(X, MIN_SAMPLES)
+
+print("\n" + "-" * 78)
+print("6. CHOOSING DBSCAN'S RADIUS (eps)")
+print("-" * 78)
+print(f"k-distance knee at eps = {EPS:.2f}  (min_samples = {MIN_SAMPLES})")
+print("\nHow sensitive is that? Clusters found at nearby values of eps:")
+for candidate in [EPS * 0.7, EPS * 0.85, EPS, EPS * 1.3, EPS * 1.6]:
+    labels = DBSCAN(eps=candidate, min_samples=MIN_SAMPLES).fit_predict(X)
+    n_found = len(set(labels)) - (1 if -1 in labels else 0)
+    print(f"  eps={candidate:4.2f}  ->  {n_found:2d} cluster(s), "
+          f"{(labels == -1).mean():5.1%} of customers marked as noise")
+print("A parameter this twitchy is the price DBSCAN charges for not needing k.")
+
+fig_eps = go.Figure(
+    go.Scatter(x=np.arange(len(kdist_curve)), y=kdist_curve, mode="lines",
+               line=dict(color="#4C78A8"), name="k-distance")
+)
+fig_eps.add_hline(y=EPS, line_dash="dash", line_color="red",
+                  annotation_text=f"knee: eps = {EPS:.2f}")
+fig_eps.update_layout(
+    title=f"k-distance curve (distance to the {MIN_SAMPLES}th nearest neighbour, sorted)",
+    xaxis_title="Customers, sorted by distance",
+    yaxis_title=f"Distance to {MIN_SAMPLES}th neighbour",
+    height=420,
+)
+show(fig_eps)
+
+
+# %% 7. FITTING THE FOUR ALGORITHMS
+# ==============================================================================
+
+# MeanShift needs a bandwidth — the radius of the window it slides towards dense
+# regions. Estimated once here, from a 500-customer subsample, and reused: it is
+# a property of the data, not of any single fit, and re-deriving it inside every
+# fit (including the five stability refits) would repeat the most expensive step
+# in the lesson six times over for the same answer.
+BANDWIDTH = estimate_meanshift_bandwidth(X)
+
+# One spec table instead of four copy-pasted blocks. Each `build` takes no
+# arguments so the stability analysis in section 10 can refit an algorithm on a
+# resample without knowing anything about it.
+ALGORITHMS = build_algorithms(K, EPS, BANDWIDTH, MIN_SAMPLES)
+
+print("\n" + "-" * 78)
+print("7. FITTING FOUR ALGORITHMS")
+print("-" * 78)
+
+labels = {}
+for name, spec in ALGORITHMS.items():
+    labels[name] = spec["build"]().fit_predict(X)
+    found = len(set(labels[name])) - (1 if -1 in labels[name] else 0)
+    print(f"  {name:<14} {spec['family']:<20} -> {found} clusters   ({spec['note']})")
+
+print("\nNote which algorithms were *told* how many clusters to find and which worked it")
+print("out themselves — and that the two who decided for themselves disagree.")
+
+
+# %% 8. EVALUATION WITHOUT LABELS
+# ==============================================================================
+
+
+show_source(score_clustering)
+
+scores = pd.DataFrame({name: score_clustering(X, lab) for name, lab in labels.items()}).T
+
+print("\n" + "-" * 78)
+print("8. EVALUATION (no labels exist, so these are all internal measures)")
+print("-" * 78)
+print(scores.round(3).to_string())
+print("\n  silhouette         higher is better (-1 to 1)")
+print("  calinski_harabasz  higher is better")
+print("  davies_bouldin     lower is better")
+print("  noise              share of customers the algorithm refused to place")
+print("\nRead these as a group, not a leaderboard. A method that dumps 90% of customers")
+print("into one cluster and calls the other 10% noise can score beautifully while being")
+print("useless — check `clusters`, `noise` and `smallest_cluster` before believing any")
+print("of the three scores.")
+
+# The density-based methods deserve a specific verdict rather than a shrug.
+tiny = {name: int(row["smallest_cluster"]) for name, row in scores.iterrows()}
+dbscan_clusters = int(scores.loc["DBSCAN", "clusters"])
+print(f"\nDBSCAN is the instructive failure here. It split the base into {dbscan_clusters} clusters,")
+print(f"the smallest holding {tiny['DBSCAN']} customers, and scored the worst silhouette of the four.")
+print("That is not a bug — it is what density-based clustering does to data with no dense")
+print("regions. DBSCAN looks for islands separated by empty space; standardised customer")
+print("data is one diffuse cloud, so it finds no islands and shatters the edges into")
+print("fragments instead. Density methods earn their keep on data with genuine voids and")
+print("odd shapes (spatial data, anomaly detection) — not on a demographic blob.")
+print("\nMeanShift, the other method that chose its own k, landed on "
+      f"{int(scores.loc['MeanShift', 'clusters'])} — and K-Means was told to")
+print("find 4. Three algorithms, three different answers, none of them wrong: they are")
+print("answering three different questions about what a cluster is.")
+
+
+# %% 9. VISUAL INSPECTION — 2D PROJECTION AND SILHOUETTE PLOTS
+# ==============================================================================
+# Numbers alone will not tell you whether a clustering makes sense. The standard
+# check is to squash the feature space down to two dimensions and look at it.
+
+
+show_source(pca_projection)
+
+coords, variance = pca_projection(X)
+
+print("\n" + "-" * 78)
+print("9. VISUAL INSPECTION")
+print("-" * 78)
+print(f"The 2D projection keeps {variance.sum():.0%} of the variance "
+      f"(PC1 {variance[0]:.0%}, PC2 {variance[1]:.0%}) — enough to trust the broad picture,")
+print("not enough to judge fine boundaries.")
+
+fig_pca = make_subplots(rows=2, cols=2, subplot_titles=list(labels))
+for position, (name, lab) in enumerate(labels.items()):
+    row, col = divmod(position, 2)
+    fig_pca.add_trace(
+        go.Scatter(
+            x=coords[:, 0],
+            y=coords[:, 1],
+            mode="markers",
+            marker=dict(size=3, color=lab, colorscale="Viridis", opacity=0.7),
+            text=[f"{name}: {'noise' if v == -1 else f'cluster {v}'}" for v in lab],
+            hoverinfo="text",
+            showlegend=False,
+        ),
+        row=row + 1, col=col + 1,
+    )
+fig_pca.update_layout(
+    height=760,
+    title_text=f"The same customers, four algorithms (PCA projection, "
+               f"{variance.sum():.0%} of variance)",
+)
+fig_pca.update_xaxes(title_text="PC1")
+fig_pca.update_yaxes(title_text="PC2")
+show(fig_pca)
+
+# The silhouette plot: one horizontal bar per customer, grouped by cluster and
+# sorted. Wide, even blocks that all clear the average line mean a healthy
+# clustering; a cluster sitting mostly left of the line is one that should
+# probably not exist.
+# `silhouette_samples` needs a value per customer, so it cannot be subsampled the
+# way the summary score can — it is O(n^2) by construction. Drawing it for four
+# values of k on the full base means four 5-million-entry distance matrices for a
+# picture whose shape is identical on a fraction of the points, so the plot (and
+# only the plot) works from a fixed random sample.
+plot_index = np.random.default_rng(RANDOM_STATE).choice(
+    len(X), size=min(SILHOUETTE_PLOT_SAMPLE, len(X)), replace=False
+)
+X_plot = X[plot_index]
+
+fig_sil = make_subplots(rows=2, cols=2, subplot_titles=[f"k = {k}" for k in (2, 3, 4, 5)])
+for position, k in enumerate((2, 3, 4, 5)):
+    row, col = divmod(position, 2)
+    k_labels = KMeans(n_clusters=k, random_state=RANDOM_STATE, n_init=10).fit_predict(X_plot)
+    per_customer = silhouette_samples(X_plot, k_labels)
+    y_offset = 0
+    for cluster in range(k):
+        values = np.sort(per_customer[k_labels == cluster])
+        fig_sil.add_trace(
+            go.Scatter(
+                x=values,
+                y=np.arange(y_offset, y_offset + len(values)),
+                mode="lines",
+                fill="tozerox",
+                line=dict(width=0.5),
+                showlegend=False,
+                name=f"cluster {cluster}",
+            ),
+            row=row + 1, col=col + 1,
+        )
+        y_offset += len(values) + 20
+    fig_sil.add_vline(x=per_customer.mean(), line_dash="dash", line_color="red",
+                      row=row + 1, col=col + 1)
+fig_sil.update_layout(height=760, title_text="Silhouette analysis (red line = average)")
+fig_sil.update_xaxes(title_text="Silhouette coefficient")
+fig_sil.update_yaxes(showticklabels=False, title_text="Customers, grouped by cluster")
+show(fig_sil)
+
+
+# %% 10. STABILITY — THE CHECK ALMOST NOBODY RUNS
+# ==============================================================================
+
+
+show_source(stability)
+show_source(stability_verdict)
+
+print("\n" + "-" * 78)
+print("10. STABILITY UNDER RESAMPLING (adjusted Rand index, 5 runs at 80%)")
+print("-" * 78)
+
+for name, spec in ALGORITHMS.items():
+    mean_ari, std_ari = stability(spec["build"], X, labels[name])
+    scores.loc[name, "stability"] = mean_ari
+    verdict = stability_verdict(mean_ari, scores.loc[name, "silhouette"])
+    print(f"  {name:<14} ARI = {mean_ari:.3f} +/- {std_ari:.3f}   {verdict}")
+
+print("\n1.0 = the same customers grouped together every time; 0.0 = chance.")
+print("A clustering you intend to build campaigns on should be well above 0.75 — the")
+print("segments have to survive next quarter's data, not just this quarter's.")
+print("Stable is necessary, not sufficient: an algorithm can reliably find the same")
+print("meaningless partition. The verdict therefore also checks separation (silhouette).")
+
+
+# %% 11. THE HIERARCHY, DRAWN
+# ==============================================================================
+# Hierarchical clustering's selling point is that it does not commit to a k. It
+# builds the whole tree, and you choose where to cut it afterwards.
+
+DENDROGRAM_SAMPLE = 60  # 2,237 leaves would be an unreadable smear
+
+rng = np.random.default_rng(RANDOM_STATE)
+sample_index = rng.choice(len(X), size=DENDROGRAM_SAMPLE, replace=False)
+linkage_matrix = linkage(X[sample_index], method="ward")
+tree = dendrogram(linkage_matrix, no_plot=True)
+
+# Where to cut for K clusters. Merge heights are the last column of the linkage
+# matrix, in ascending order: the final merge (-1) takes the tree from 2 clusters
+# to 1, so the last (K-1) merges are the ones that must NOT happen. Cutting
+# halfway between the last merge we keep and the first we reject is unambiguous.
+merge_heights = linkage_matrix[:, 2]
+cut_height = (merge_heights[-K] + merge_heights[-(K - 1)]) / 2
+
+fig_tree = go.Figure()
+for x_coords, y_coords in zip(tree["icoord"], tree["dcoord"]):
+    fig_tree.add_trace(
+        go.Scatter(x=x_coords, y=y_coords, mode="lines", line=dict(color="#4C78A8", width=1),
+                   hoverinfo="y", showlegend=False)
+    )
+fig_tree.add_hline(y=cut_height, line_dash="dash", line_color="red",
+                   annotation_text=f"cut here for {K} clusters", annotation_position="right")
+fig_tree.update_layout(
+    title=f"Hierarchical clustering dendrogram (sample of {DENDROGRAM_SAMPLE} customers)",
+    xaxis_title="Customers",
+    yaxis_title="Merge distance",
+    height=560,
+    xaxis=dict(showticklabels=False),
+)
+show(fig_tree)
+
+print("\n" + "-" * 78)
+print("11. THE DENDROGRAM")
+print("-" * 78)
+print(f"Drawn on a sample of {DENDROGRAM_SAMPLE} customers — all {len(X):,} leaves would be an")
+print("unreadable smear, and the shape of the tree is what matters.")
+print(f"Cut line at height {cut_height:.2f} yields {K} clusters. Slide it up and you merge")
+print("segments; slide it down and you split them. Reading that trade-off straight off a")
+print("picture is something no other algorithm here offers.")
+
+
+# %% 12. WHO ARE THESE PEOPLE?
+# ==============================================================================
+# The payoff. A cluster number is worthless; a described segment is a campaign.
+
+
+show_source(profile_clusters)
+
+df["Cluster"] = labels["K-Means"]
+profiles = profile_clusters(df, labels["K-Means"], CLUSTERING_FEATURES)
+
+print("\n" + "-" * 78)
+print("12. SEGMENT PROFILES (K-Means)")
+print("-" * 78)
+print(profiles.to_string())
+
+# Which feature makes each cluster unusual? Compare each cluster's mean against
+# the overall mean, in standard deviations — the same z-score the algorithm saw.
+z_scores = cluster_fingerprints(df, profiles, CLUSTERING_FEATURES)
+
+print("\nHow far each segment sits from the average customer (in standard deviations):")
+print(z_scores.to_string())
+
+print("\nReading those rows left to right gives each segment a name:")
+for cluster in sorted(z_scores.index):
+    traits = name_segment(z_scores.loc[cluster])
+    print(f"  Cluster {cluster} ({profiles.loc[cluster, 'Customers']:>4} customers): {traits}")
+
+fig_profiles = px.imshow(
+    z_scores.T,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-2,
+    zmax=2,
+    aspect="auto",
+    title="Segment fingerprints (standard deviations from the average customer)",
+    labels=dict(x="Cluster", y="Feature", color="z-score"),
+)
+fig_profiles.update_layout(height=460)
+show(fig_profiles)
+
+
+# %% 13. BACK TO THE BUSINESS QUESTION
+# ==============================================================================
+# Clustering found groups without being told what to look for. Are those groups
+# worth different amounts — and did we need clustering to find that out?
+
+print("\n" + "-" * 78)
+print("13. ARE THE DATA-DRIVEN SEGMENTS WORTH DIFFERENT AMOUNTS?")
+print("-" * 78)
+
+value_check = df.groupby("Cluster").agg(
+    Customers=("ID", "count"),
+    Mean_Spending=("Total_Spending", "mean"),
+    Mean_Income=("Income", "mean"),
+    Mean_Recency=("Recency", "mean"),
+    Campaign_Response=("Total_Campaigns_Accepted", "mean"),
+).round(1)
+value_check["Share_of_Revenue"] = (
+    df.groupby("Cluster")["Total_Spending"].sum() / df["Total_Spending"].sum() * 100
+).round(1)
+print(value_check.to_string())
+
+# A value-only segmentation, for comparison: split the same customers into four
+# tiers on spending alone — roughly what RFM's monetary score would give you.
+df["SpendQuartile"] = pd.qcut(df["Total_Spending"], 4, labels=["Q1", "Q2", "Q3", "Q4"])
+agreement = pd.crosstab(df["Cluster"], df["SpendQuartile"])
+print("\nAgainst a value-only split of the same customers (spending quartiles):")
+print(agreement.to_string())
+
+print(
+    "\nThe clusters clearly differ in value — but so would any segmentation built on\n"
+    "spending, and the cross-tab shows the two are far from independent. Value is not\n"
+    "what clustering contributed.\n"
+    "\nWhat it contributed is the *description*. A spending quartile tells you a customer\n"
+    "is in the top 25%; the cluster tells you they are affluent, have no children at\n"
+    "home, respond to campaigns and rarely browse the website. The first is a ranking.\n"
+    "The second is a brief you can hand to a copywriter — and it came from the\n"
+    "demographic columns that RFM and CLTV never had access to."
 )
 
-fig_dendro.update_layout(
-    title=dendro_title,
-    xaxis_title='Sample Index (Customer)',
-    yaxis_title='Distance',
-    height=600,
-    width=1000,
-    showlegend=False,
-    hovermode='closest'
-)
-
-fig_dendro.show()
-
-print(f"Dendrogram shows hierarchical merging of clusters using Ward linkage.")
-print(f"Red dashed line indicates where we cut the tree to get {optimal_k} clusters.")
-print(f"Higher distances indicate more distant clusters being merged.")
-
-# %% 
-# Visualization 2b: Hierarchical Clustering in 3D Feature Space
-fig_hierarchical = go.Figure(data=[go.Scatter3d(
-    x=df['Income'],
-    y=df['Total_Spending'],
-    z=df['Recency'],
-    mode='markers',
-    marker=dict(
-        size=4,
-        color=hierarchical_labels,
-        colorscale='Plasma',
-        showscale=True,
-        colorbar=dict(title="Cluster"),
-        opacity=0.8
-    ),
-    text=[f"Income: ${x:,.0f}<br>Spending: ${y:,.0f}<br>Recency: {z:.0f} days<br>Cluster: {c}" 
-          for x, y, z, c in zip(df['Income'], df['Total_Spending'], df['Recency'], hierarchical_labels)],
-    hoverinfo='text'
-)])
-
-fig_hierarchical.update_layout(
-    title='Hierarchical Clustering (3D Feature Space)',
-    scene=dict(
-        xaxis_title='Income ($)',
-        yaxis_title='Total Spending ($)',
-        zaxis_title='Recency (days)',
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.3))
-    ),
-    height=700,
-    width=900
-)
-fig_hierarchical.show()
-
-# %% 
-# Visualization 3: DBSCAN Clustering in 3D Feature Space
-# Color noise points (label -1) differently
-colors = ['red' if label == -1 else label for label in dbscan_labels]
-
-fig_dbscan = go.Figure(data=[go.Scatter3d(
-    x=df['Income'],
-    y=df['Total_Spending'],
-    z=df['Recency'],
-    mode='markers',
-    marker=dict(
-        size=5,
-        color=dbscan_labels,
-        colorscale='Inferno',
-        showscale=True,
-        colorbar=dict(title="Cluster/-1=Noise"),
-        opacity=0.8
-    ),
-    text=[f"Income: ${x:,.0f}<br>Spending: ${y:,.0f}<br>Recency: {z:.0f} days<br>Label: {'Noise' if c == -1 else 'Cluster ' + str(c)}" 
-          for x, y, z, c in zip(df['Income'], df['Total_Spending'], df['Recency'], dbscan_labels)],
-    hoverinfo='text'
-)])
-
-fig_dbscan.update_layout(
-    title='DBSCAN Clustering (3D Feature Space)',
-    scene=dict(
-        xaxis_title='Income ($)',
-        yaxis_title='Total Spending ($)',
-        zaxis_title='Recency (days)',
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.3))
-    ),
-    height=700,
-    width=900
-)
-fig_dbscan.show()
-
-# %% [markdown]
-# # 10. ALGORITHM COMPARISON
-
-# Create a comparison of the three algorithms using different metrics
-
-print("\n" + "=" * 70)
-print("CLUSTERING ALGORITHMS COMPARISON")
-print("=" * 70)
-
-comparison_data = {
-    'Algorithm': ['K-Means', 'Hierarchical', 'DBSCAN'],
-    'Number of Clusters': [optimal_k, optimal_k, n_clusters_dbscan],
-    'Silhouette Score': [
-        silhouette_score(X_scaled, kmeans_labels),
-        silhouette_score(X_scaled, hierarchical_labels),
-        silhouette_score(X_scaled, dbscan_labels) if n_clusters_dbscan > 1 else np.nan
-    ],
-    'Calinski-Harabasz Index': [
-        calinski_harabasz_score(X_scaled, kmeans_labels),
-        calinski_harabasz_score(X_scaled, hierarchical_labels),
-        calinski_harabasz_score(X_scaled, dbscan_labels) if n_clusters_dbscan > 1 else np.nan
-    ],
-    'Davies-Bouldin Index': [
-        davies_bouldin_score(X_scaled, kmeans_labels),
-        davies_bouldin_score(X_scaled, hierarchical_labels),
-        davies_bouldin_score(X_scaled, dbscan_labels) if n_clusters_dbscan > 1 else np.nan
-    ]
-}
-
-comparison_df = pd.DataFrame(comparison_data)
-print("\n" + comparison_df.to_string(index=False))
-
-# Visualize comparison
-fig_comparison = go.Figure(data=[
-    go.Bar(name='Silhouette Score', x=comparison_df['Algorithm'], 
-           y=comparison_df['Silhouette Score']),
-    go.Bar(name='Calinski-Harabasz (scaled)', x=comparison_df['Algorithm'],
-           y=comparison_df['Calinski-Harabasz Index'] / 100),
-])
-
-fig_comparison.update_layout(
-    title='Algorithm Performance Comparison',
-    barmode='group',
-    height=400,
-    yaxis_title='Score',
-    xaxis_title='Algorithm'
-)
-fig_comparison.show()
-
-# %% [markdown]
-# # 11. CUSTOMER SEGMENT ANALYSIS (Using K-Means Results)
-
-# Analyze the characteristics of each cluster to understand customer segments
-
-print("\n" + "=" * 70)
-print("CUSTOMER SEGMENT PROFILES (K-Means Clustering)")
-print("=" * 70)
-
-for cluster in range(optimal_k):
-    cluster_data = df[df['KMeans_Cluster'] == cluster]
-    
-    print(f"\n{'='*70}")
-    print(f"CLUSTER {cluster}: {len(cluster_data)} customers ({len(cluster_data)/len(df)*100:.1f}%)")
-    print(f"{'='*70}")
-    
-    print(f"\nSpending Profile:")
-    print(f"  Average Income: ${cluster_data['Income'].mean():,.0f}")
-    print(f"  Average Total Spending: ${cluster_data['Total_Spending'].mean():,.0f}")
-    print(f"  Average Spending by Category:")
-    for col in spending_cols:
-        print(f"    - {col}: ${cluster_data[col].mean():,.0f}")
-    
-    print(f"\nPurchase Behavior:")
-    print(f"  Average Total Purchases: {cluster_data['Total_Purchases'].mean():.1f}")
-    print(f"  Average Web Purchases: {cluster_data['NumWebPurchases'].mean():.1f}")
-    print(f"  Average Catalog Purchases: {cluster_data['NumCatalogPurchases'].mean():.1f}")
-    print(f"  Average Store Purchases: {cluster_data['NumStorePurchases'].mean():.1f}")
-    
-    print(f"\nEngagement:")
-    print(f"  Average Campaign Response: {cluster_data['Total_Campaigns_Accepted'].mean():.1f}")
-    print(f"  Average Days Since Last Purchase (Recency): {cluster_data['Recency'].mean():.0f} days")
-    print(f"  Average Engagement Score: {cluster_data['Engagement_Score'].mean():.2f}")
-    
-    print(f"\nDemographics:")
-    print(f"  Average Number of Children: {cluster_data['Total_Children'].mean():.1f}")
-
-# %% 
-# Create visualizations comparing cluster characteristics
-
-fig = make_subplots(
-    rows=2, cols=2,
-    subplot_titles=("Average Income", "Average Total Spending", 
-                    "Average Recency", "Average Campaign Response")
-)
-
-clusters = sorted(df['KMeans_Cluster'].unique())
-cluster_labels_str = [f"Cluster {c}" for c in clusters]
-
-fig.add_trace(
-    go.Bar(name='Income', x=cluster_labels_str,
-           y=[df[df['KMeans_Cluster']==c]['Income'].mean() for c in clusters]),
-    row=1, col=1
-)
-
-fig.add_trace(
-    go.Bar(name='Spending', x=cluster_labels_str,
-           y=[df[df['KMeans_Cluster']==c]['Total_Spending'].mean() for c in clusters]),
-    row=1, col=2
-)
-
-fig.add_trace(
-    go.Bar(name='Recency', x=cluster_labels_str,
-           y=[df[df['KMeans_Cluster']==c]['Recency'].mean() for c in clusters]),
-    row=2, col=1
-)
-
-fig.add_trace(
-    go.Bar(name='Campaigns', x=cluster_labels_str,
-           y=[df[df['KMeans_Cluster']==c]['Total_Campaigns_Accepted'].mean() for c in clusters]),
-    row=2, col=2
-)
-
-fig.update_yaxes(title_text="Income ($)", row=1, col=1)
-fig.update_yaxes(title_text="Spending ($)", row=1, col=2)
-fig.update_yaxes(title_text="Days", row=2, col=1)
-fig.update_yaxes(title_text="Count", row=2, col=2)
-
-fig.update_layout(height=600, title_text="Customer Segment Characteristics")
-fig.show()
-
-# %%
+print("\n" + "=" * 78)
+print(f"Done. {K} segments over {len(df):,} customers, "
+      f"{len(CLUSTERING_FEATURES)} features  (data: {source})")
+print("=" * 78)
