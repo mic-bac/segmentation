@@ -9,10 +9,11 @@ Why this dataset, and only for clustering
 -----------------------------------------
 ``rfm.py`` and ``cltv.py`` use a transaction log (see ``retail_data.py``), because
 recency, frequency and retention can only be measured from dated purchases.
-Clustering needs the opposite thing: **customer attributes**. A till receipt
-records an invoice number and a price, never an age or an income, so no amount of
-transaction data will tell you that a segment is "affluent households without
-children" — and that kind of description is the entire point of clustering.
+Clustering needs the opposite thing: **customer attributes**. The retail log
+records invoice numbers and prices but no age or income, so on its own it cannot
+tell you that a segment is "affluent households without children" — and that kind
+of description is the entire point of clustering. (A loyalty-card programme links
+receipts to demographics; these two public datasets are simply not linked.)
 
 So the two datasets are not a compromise, they are the lesson: each method needs
 the data its question requires.

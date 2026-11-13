@@ -79,10 +79,11 @@ against frequency goes from −0.26 to −0.39).
 
 **Lesson 3 uses customer attributes** — Kaggle
 [Customer Personality Analysis](https://www.kaggle.com/datasets/vishakhdapat/customer-segmentation-clustering),
-2,240 customers with age, income, household, channel behaviour and campaign responses. A
-till receipt records an invoice number and a price, never an age; so no amount of
-transaction data will tell you a segment is "affluent households without children", and
-that kind of description is the entire point of clustering. Place the CSV at
+2,240 customers with age, income, household, channel behaviour and campaign responses. The
+transaction log above has no age or income column, so on its own it cannot tell you a
+segment is "affluent households without children" — and that kind of description is the
+entire point of clustering. (A retailer with a loyalty-card programme *can* link receipts
+to demographics through the card; the two public datasets used here are simply not linked.) Place the CSV at
 `data/personality/customer_segmentation.csv` (or `data/customer_segmentation.csv`).
 
 `data/` is git-ignored, so a fresh clone has neither file. **The lessons still run**: each
