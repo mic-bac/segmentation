@@ -160,7 +160,8 @@ lesson uses all four standard checks: the **silhouette score**, **Davies-Bouldin
 **stability analysis** (*Stabilitätsanalyse*) that refits on resampled data and measures
 agreement — the check most reporting skips, and the one that fails most often here.
 
-It also refuses to let a metric make a judgement call: every index prefers k=2, the lesson
+It also refuses to let a metric make a judgement call: silhouette, Calinski-Harabasz and
+Davies-Bouldin all prefer k=2 (inertia always falls as k grows, so it only shows an elbow), the lesson
 explains why it uses k=4 anyway, and says plainly that the metrics narrow the field while a
 human picks.
 
